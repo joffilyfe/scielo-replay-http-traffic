@@ -3,11 +3,11 @@ import asyncio
 import csv
 import functools
 import logging
+import re
 from datetime import datetime
 
 import aiohttp
 from apachelogs import LogEntry, LogParser
-
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)-5.5s %(message)s",
@@ -15,6 +15,8 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 logger.setLevel("DEBUG")
+
+URL_BASE_REGEX = re.compile("[htps]+:\/\/(www)?[\w\.]+\/")
 
 
 def output_jmeter_format(
@@ -85,7 +87,7 @@ def main():
     parser = argparse.ArgumentParser("Time Machine")
     parser.add_argument(
         "--connections",
-        help="Limite de máximo de conexões concorrentes",
+        help="Limite de máximo de conexões concorrentes (default: 50)",
         default=50,
         type=int,
     )
@@ -101,7 +103,10 @@ def main():
         help="Formato de saída das requisições",
     )
     parser.add_argument(
-        "--dont-wait-until-request-time", default=True, action="store_true"
+        "--dont-wait-until-request-time",
+        action="store_true",
+        help="Ignora o atraso de tempo da requisição. Utilize quando não quiser"
+        " seguir o modo de replay de acessos.",
     )
     parser.add_argument(
         "log_file",
@@ -109,9 +114,10 @@ def main():
         help="Arquivo de log em formato Apache",
     )
     parser.add_argument(
-        "servername",
+        "urlbase",
         default="https://new.scielo.br",
-        help="Website que será utilizado para realizar as requisições",
+        help="Website utilizado para realizar as requisições (schema + netloc)"
+        ", ex: https://www.scielo.br",
     )
     args = parser.parse_args()
     loop = asyncio.get_event_loop()
@@ -130,7 +136,7 @@ def main():
             connections=args.connections,
             outputfunc=outputfunc,
             dont_wait_until_request_time=args.dont_wait_until_request_time,
-            servername=args.servername,
+            urlbase=args.urlbase,
         )
     )
 
@@ -155,9 +161,7 @@ def parse_log_access_entries(file):
     for entry in entries:
         requests.append(
             {
-                "path": entry.request_uri.replace("http://www.scielo.br/", "/").replace(
-                    "https://www.scielo.br/", "/"
-                ),
+                "path": URL_BASE_REGEX.sub("/", entry.request_uri),
                 "method": entry.request_method,
                 "delay": (entry.request_time - start_time).total_seconds(),
                 "entry": entry.entry,
@@ -168,7 +172,7 @@ def parse_log_access_entries(file):
 
 
 async def queue_tasks(
-    resources, connections, outputfunc, dont_wait_until_request_time, servername
+    resources, connections, outputfunc, dont_wait_until_request_time, urlbase
 ):
     """Enfileira as requisições que serão feitas"""
 
@@ -182,7 +186,7 @@ async def queue_tasks(
                     sem,
                     session,
                     fetch_resource,
-                    servername,
+                    urlbase,
                     resource,
                     functools.partial(outputfunc, resource=resource),
                     dont_wait_until_request_time,
@@ -200,7 +204,7 @@ async def bound_fetch(
     semaphore,
     session,
     fetcher,
-    servername,
+    urlbase,
     resource,
     outputfunc,
     dont_wait_until_request_time,
@@ -214,9 +218,7 @@ async def bound_fetch(
         delay = 0
 
     async with semaphore:
-        await fetcher(
-            session, resource, delay, outputfunc=outputfunc, servername=servername
-        )
+        await fetcher(session, resource, delay, outputfunc=outputfunc, urlbase=urlbase)
 
 
 async def fetch_resource(
@@ -224,9 +226,9 @@ async def fetch_resource(
     resource,
     delay,
     outputfunc,
-    servername,
+    urlbase,
 ):
-    """Acessa um recurso a partir de um servername definido.
+    """Acessa um recurso a partir de um urlbase definido.
 
     É possível definir um tempo de espera para que o acesso seja feito."""
 
@@ -234,7 +236,7 @@ async def fetch_resource(
     start = datetime.now()
 
     try:
-        async with session.get(f"{servername}{resource.get('path')}") as response:
+        async with session.get(f"{urlbase}{resource.get('path')}") as response:
             end = datetime.now()
             elapsed = end - start
             outputfunc(
