@@ -185,6 +185,7 @@ async def queue_tasks(
 
     sem = asyncio.Semaphore(connections)
     tasks = []
+    start_request_time = datetime.now()
 
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=timeout)
@@ -199,6 +200,7 @@ async def queue_tasks(
                     resource,
                     functools.partial(outputfunc, resource=resource),
                     dont_wait_until_request_time,
+                    start_request_time=start_request_time,
                 )
             )
             tasks.append(task)
@@ -217,6 +219,7 @@ async def bound_fetch(
     resource,
     outputfunc,
     dont_wait_until_request_time,
+    start_request_time,
 ):
     """Encapsula a função que acessa o recurso. Também faz o controle de quantas
     conexões podem ser abertas."""
@@ -227,21 +230,28 @@ async def bound_fetch(
         delay = 0
 
     async with semaphore:
-        await fetcher(session, resource, delay, outputfunc=outputfunc, urlbase=urlbase)
+        await fetcher(
+            session,
+            resource,
+            delay,
+            outputfunc=outputfunc,
+            urlbase=urlbase,
+            start_request_time=start_request_time,
+        )
 
 
 async def fetch_resource(
-    session,
-    resource,
-    delay,
-    outputfunc,
-    urlbase,
+    session, resource, delay, outputfunc, urlbase, start_request_time
 ):
     """Acessa um recurso a partir de um urlbase definido.
 
     É possível definir um tempo de espera para que o acesso seja feito."""
 
-    await asyncio.sleep(delay)
+    elapsed_since_the_first_request_time = (
+        datetime.now() - start_request_time
+    ).total_seconds()
+
+    await asyncio.sleep(delay - elapsed_since_the_first_request_time)
     start = datetime.now()
     resp = {"url": resource.get("path"), "ok": True}
 
