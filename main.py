@@ -109,6 +109,12 @@ def main():
         " seguir o modo de replay de acessos.",
     )
     parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10,
+        help="Define o tempo limite que uma requisição deve ser esperada (default: 10)",
+    )
+    parser.add_argument(
         "log_file",
         type=argparse.FileType("r"),
         help="Arquivo de log em formato Apache",
@@ -137,6 +143,7 @@ def main():
             outputfunc=outputfunc,
             dont_wait_until_request_time=args.dont_wait_until_request_time,
             urlbase=args.urlbase,
+            timeout=args.timeout,
         )
     )
 
@@ -172,14 +179,16 @@ def parse_log_access_entries(file):
 
 
 async def queue_tasks(
-    resources, connections, outputfunc, dont_wait_until_request_time, urlbase
+    resources, connections, outputfunc, dont_wait_until_request_time, urlbase, timeout
 ):
     """Enfileira as requisições que serão feitas"""
 
     sem = asyncio.Semaphore(connections)
     tasks = []
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout)
+    ) as session:
         for resource in resources:
             task = asyncio.ensure_future(
                 bound_fetch(
