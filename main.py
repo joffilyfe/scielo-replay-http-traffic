@@ -21,7 +21,7 @@ URL_BASE_REGEX = re.compile("[htps]+:\/\/(www)?[\w\.]+\/")
 
 def output_jmeter_format(
     resource: dict = {},
-    response=None,
+    response=dict,
     request_start_time: datetime = None,
     request_end_time: datetime = None,
     output_file=None,
@@ -60,18 +60,18 @@ def output_jmeter_format(
             "elapsed": int(
                 (request_end_time.timestamp() - request_start_time.timestamp()) * 1000
             ),
-            "label": str(response.url),
-            "responseCode": response.status,
-            "responseMessage": response.reason,
+            "label": str(response["url"]),
+            "responseCode": response["status"],
+            "responseMessage": response["reason"],
             "threadName": "Thread Group",
             "dataType": "text",
-            "success": response.ok,
+            "success": response["ok"],
             "failureMessage": "",
             "bytes": 0,
             "sentBytes": 0,
             "grpThreads": 0,
             "allThreads": 1,
-            "URL": str(response.url),
+            "URL": str(response["url"]),
             "Latency": 0,
             "IdleTime": 0,
             "Connect": 0,
@@ -243,23 +243,24 @@ async def fetch_resource(
 
     await asyncio.sleep(delay)
     start = datetime.now()
+    resp = {"url": resource.get("path"), "ok": True}
 
     try:
         async with session.get(f"{urlbase}{resource.get('path')}") as response:
             end = datetime.now()
-            elapsed = end - start
-            outputfunc(
-                response=response, request_start_time=start, request_end_time=end
-            )
-            logger.info("%s %s %s %s", delay, elapsed, response.status, response.url)
-    except aiohttp.client_exceptions.TooManyRedirects:
-        pass
-    except asyncio.TimeoutError:
-        pass
-    except aiohttp.client_exceptions.ClientConnectorError:
-        pass
-    except Exception as e:
-        logger.exception("Exceção não tratada")
+            resp.update({"reason": response.reason, "status": response.status})
+    except asyncio.TimeoutError as e:
+        resp.update({"reason": repr(e), "ok": False, "status": 504})
+    except (
+        aiohttp.client_exceptions.TooManyRedirects,
+        aiohttp.client_exceptions.ClientConnectorError,
+        Exception,
+    ) as e:
+        resp.update({"reason": repr(e), "ok": False, "status": 0})
+    finally:
+        end = datetime.now()
+        outputfunc(response=resp, request_start_time=start, request_end_time=end)
+        logger.info("%s %s %s %s", delay, (end - start), resp["status"], resp["url"])
 
 
 if __name__ == "__main__":
